@@ -1,5 +1,6 @@
 package com.pravera.flutter_foreground_task.service
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.*
 import android.content.*
@@ -31,7 +32,7 @@ import java.util.*
  * @author Dev-hwang
  * @version 1.0
  */
-class ForegroundService : Service() {
+open class ForegroundService : Service() {
     companion object {
         private val TAG = ForegroundService::class.java.simpleName
 
@@ -247,6 +248,10 @@ class ForegroundService : Service() {
 
     @SuppressLint("WrongConstant", "SuspiciousIndentation")
     private fun startForegroundService() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            return
+        }
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             createNotificationChannel()
         }
