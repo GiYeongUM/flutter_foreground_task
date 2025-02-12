@@ -107,7 +107,10 @@ open class ForegroundService : Service() {
                 val iPackageName = intent.`package`
                 val cPackageName = packageName
                 if (iPackageName != cPackageName) {
-                    Log.d(TAG, "This intent has not sent from the current package. ($iPackageName != $cPackageName)")
+                    Log.d(
+                        TAG,
+                        "This intent has not sent from the current package. ($iPackageName != $cPackageName)"
+                    )
                     return
                 }
 
@@ -125,56 +128,66 @@ open class ForegroundService : Service() {
         registerBroadcastReceiver()
     }
 
+    @RequiresApi(Build.VERSION_CODES.S)
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         loadDataFromPreferences()
+        try {
+            var action = foregroundServiceStatus.action
+            val isSetStopWithTaskFlag = ForegroundServiceUtils.isSetStopWithTaskFlag(this)
 
-        var action = foregroundServiceStatus.action
-        val isSetStopWithTaskFlag = ForegroundServiceUtils.isSetStopWithTaskFlag(this)
-
-        if (action == ForegroundServiceAction.API_STOP) {
-            RestartReceiver.cancelRestartAlarm(this)
-            stopForegroundService()
-            return START_NOT_STICKY
-        }
-
-        if (intent == null) {
-            ForegroundServiceStatus.setData(this, ForegroundServiceAction.RESTART)
-            foregroundServiceStatus = ForegroundServiceStatus.getData(this)
-            action = foregroundServiceStatus.action
-        }
-
-        when (action) {
-            ForegroundServiceAction.API_START,
-            ForegroundServiceAction.API_RESTART -> {
-                startForegroundService()
-                createForegroundTask()
+            if (action == ForegroundServiceAction.API_STOP) {
+                RestartReceiver.cancelRestartAlarm(this)
+                stopForegroundService()
+                return START_NOT_STICKY
             }
-            ForegroundServiceAction.API_UPDATE -> {
-                updateNotification()
-                val prevCallbackHandle = prevForegroundTaskData?.callbackHandle
-                val currCallbackHandle = foregroundTaskData.callbackHandle
-                if (prevCallbackHandle != currCallbackHandle) {
+
+            if (intent == null) {
+                ForegroundServiceStatus.setData(this, ForegroundServiceAction.RESTART)
+                foregroundServiceStatus = ForegroundServiceStatus.getData(this)
+                action = foregroundServiceStatus.action
+            }
+
+            when (action) {
+                ForegroundServiceAction.API_START-> {
+                    startForegroundService()
                     createForegroundTask()
-                } else {
-                    val prevEventAction = prevForegroundTaskOptions?.eventAction
-                    val currEventAction = foregroundTaskOptions.eventAction
-                    if (prevEventAction != currEventAction) {
-                        updateForegroundTask()
+                }
+                ForegroundServiceAction.API_RESTART -> {
+                    startForegroundService()
+                    createForegroundTask()
+                }
+
+                ForegroundServiceAction.API_UPDATE -> {
+                    updateNotification()
+                    val prevCallbackHandle = prevForegroundTaskData?.callbackHandle
+                    val currCallbackHandle = foregroundTaskData.callbackHandle
+                    if (prevCallbackHandle != currCallbackHandle) {
+                        createForegroundTask()
+                    } else {
+                        val prevEventAction = prevForegroundTaskOptions?.eventAction
+                        val currEventAction = foregroundTaskOptions.eventAction
+                        if (prevEventAction != currEventAction) {
+                            updateForegroundTask()
+                        }
                     }
                 }
-            }
-            ForegroundServiceAction.REBOOT,
-            ForegroundServiceAction.RESTART -> {
-                startForegroundService()
-                createForegroundTask()
-                Log.d(TAG, "The service has been restarted by Android OS.")
-            }
-        }
 
-        return if (isSetStopWithTaskFlag) {
-            START_NOT_STICKY
-        } else {
-            START_STICKY
+                ForegroundServiceAction.REBOOT,
+                ForegroundServiceAction.RESTART -> {
+                    startForegroundService()
+                    createForegroundTask()
+                    Log.d(TAG, "The service has been restarted by Android OS.")
+                }
+            }
+
+            return if (isSetStopWithTaskFlag) {
+                START_NOT_STICKY
+            } else {
+                START_STICKY
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, e.message, e)
+            return START_NOT_STICKY
         }
     }
 
@@ -191,7 +204,10 @@ open class ForegroundService : Service() {
         val isCorrectlyStopped = foregroundServiceStatus.isCorrectlyStopped()
         val isSetStopWithTaskFlag = ForegroundServiceUtils.isSetStopWithTaskFlag(this)
         if (!isCorrectlyStopped && !isSetStopWithTaskFlag) {
-            Log.e(TAG, "The service was terminated due to an unexpected problem. The service will restart after 5 seconds.")
+            Log.e(
+                TAG,
+                "The service was terminated due to an unexpected problem. The service will restart after 5 seconds."
+            )
             RestartReceiver.setRestartAlarm(this, 5000)
         }
     }
@@ -246,32 +262,73 @@ open class ForegroundService : Service() {
         unregisterReceiver(broadcastReceiver)
     }
 
+    @RequiresApi(Build.VERSION_CODES.S)
     @SuppressLint("WrongConstant", "SuspiciousIndentation")
     private fun startForegroundService() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            return
+        try {
+            // 앱이 포그라운드 상태인지 확인
+            if (!isAppInForeground(this)) {
+                Log.e(TAG, "앱이 백그라운드 상태이므로 포그라운드 서비스를 시작할 수 없습니다.")
+                return
+            }
+
+            // 필수 권한 체크 (위치 권한 등)
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED
+            ) {
+                Log.e(TAG, "위치 권한이 없습니다. 포그라운드 서비스를 시작할 수 없습니다.")
+                return
+            }
+
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                Log.e(TAG, "백그라운드 위치 권한이 없습니다. 포그라운드 서비스를 시작할 수 없습니다.")
+                return
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.FOREGROUND_SERVICE) != PackageManager.PERMISSION_GRANTED
+            ) {
+                Log.e(TAG, "포그라운드 서비스 권한이 없습니다.")
+                return
+            }
+
+            // Android 12 (API 31) 이상: Foreground Service Location 권한 확인
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION) != PackageManager.PERMISSION_GRANTED
+            ) {
+                Log.e(TAG, "백그라운드 서비스 위치 권한이 없습니다.")
+                return
+            }
+
+            // 알림 채널 생성 (Android O 이상)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                createNotificationChannel()
+            }
+
+            val serviceId = notificationOptions.serviceId
+            val notification = createNotification()
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    serviceId,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MANIFEST
+                )
+            } else {
+                startForeground(serviceId, notification)
+            }
+
+            releaseLockMode()
+            acquireLockMode()
+
+            _isRunningServiceState.update { true }
+        } catch (e: ForegroundServiceStartNotAllowedException) {
+            Log.e(TAG, "포그라운드 서비스 시작이 허용되지 않았습니다: ${e.message}")
+            throw e;
+        } catch (e: Exception) {
+            Log.e(TAG, "포그라운드 서비스 시작 중 오류 발생: ${e.message}")
+            throw e
         }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            createNotificationChannel()
-        }
-
-        val serviceId = notificationOptions.serviceId
-        val notification = createNotification()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                serviceId,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MANIFEST
-            )
-        } else {
-            startForeground(serviceId, notification)
-        }
-
-        releaseLockMode()
-        acquireLockMode()
-
-        _isRunningServiceState.update { true }
     }
 
     private fun stopForegroundService() {
@@ -409,7 +466,10 @@ open class ForegroundService : Service() {
         if (foregroundTaskOptions.allowWakeLock && (wakeLock == null || wakeLock?.isHeld == false)) {
             wakeLock =
                 (applicationContext.getSystemService(Context.POWER_SERVICE) as PowerManager).run {
-                    newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ForegroundService:WakeLock").apply {
+                    newWakeLock(
+                        PowerManager.PARTIAL_WAKE_LOCK,
+                        "ForegroundService:WakeLock"
+                    ).apply {
                         setReferenceCounted(false)
                         acquire()
                     }
@@ -419,7 +479,10 @@ open class ForegroundService : Service() {
         if (foregroundTaskOptions.allowWifiLock && (wifiLock == null || wifiLock?.isHeld == false)) {
             wifiLock =
                 (applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager).run {
-                    createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "ForegroundService:WifiLock").apply {
+                    createWifiLock(
+                        WifiManager.WIFI_MODE_FULL_HIGH_PERF,
+                        "ForegroundService:WifiLock"
+                    ).apply {
                         setReferenceCounted(false)
                         acquire()
                     }
@@ -468,7 +531,8 @@ open class ForegroundService : Service() {
         try {
             val packageManager = applicationContext.packageManager
             val packageName = applicationContext.packageName
-            val appInfo = packageManager.getApplicationInfo(packageName, PackageManager.GET_META_DATA)
+            val appInfo =
+                packageManager.getApplicationInfo(packageName, PackageManager.GET_META_DATA)
 
             // application icon
             if (icon == null) {
@@ -593,5 +657,20 @@ open class ForegroundService : Service() {
         }
 
         return actions
+    }
+
+    private fun isAppInForeground(context: Context): Boolean {
+        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val appProcesses = activityManager.runningAppProcesses ?: return false
+
+        val packageName = context.packageName
+        for (appProcess in appProcesses) {
+            if (appProcess.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND &&
+                appProcess.processName == packageName
+            ) {
+                return true
+            }
+        }
+        return false
     }
 }
